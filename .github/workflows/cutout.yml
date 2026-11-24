@@ -1,0 +1,32 @@
+name: cutout
+on:
+  push:
+    paths: ['jobs/*.json']
+  workflow_dispatch:
+    inputs:
+      job: {description: 'jobs file', required: true}
+permissions:
+  contents: write
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 2}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - uses: actions/cache@v4
+        with: {path: ~/.u2net, key: u2net-birefnet-v1}
+      - run: pip install -q "rembg[cpu]==2.0.61" scipy pillow numpy
+      - name: pick job
+        id: pick
+        run: |
+          if [ -n "${{ github.event.inputs.job }}" ]; then J="${{ github.event.inputs.job }}"; else J=$(git diff --name-only HEAD~1 HEAD -- 'jobs/*.json' | head -1); fi
+          echo "job=$J" >> $GITHUB_OUTPUT; echo "name=$(basename $J .json)" >> $GITHUB_OUTPUT
+      - run: python cutout.py ${{ steps.pick.outputs.job }}
+      - name: publish
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          cd out && tar czf ../${{ steps.pick.outputs.name }}.tgz . && cd ..
+          gh release create "batch-${{ steps.pick.outputs.name }}-${{ github.run_number }}" ${{ steps.pick.outputs.name }}.tgz --title "${{ steps.pick.outputs.name }}" --notes "cutouts"
