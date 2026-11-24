@@ -18,7 +18,7 @@ jobs:
         with: {python-version: '3.11'}
       - uses: actions/cache@v4
         with: {path: ~/.u2net, key: u2net-birefnet-v1}
-      - run: pip install -q "rembg[cpu]==2.0.61" scipy pillow numpy
+      - run: pip install -q "rembg[cpu]==2.0.61" scipy pillow numpy opencv-python-headless open-image-models
       - name: pick job
         id: pick
         run: |

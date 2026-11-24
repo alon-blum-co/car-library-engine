@@ -10,6 +10,11 @@ from scipy import ndimage
 
 job = json.load(open(sys.argv[1])); os.makedirs('out', exist_ok=True)
 sess = new_session(os.environ.get('MODEL', 'birefnet-general'))
+try:
+    from open_image_models import LicensePlateDetector
+    plate_det = LicensePlateDetector(detection_model='yolo-v9-s-608-license-plate-end2end')
+except Exception as e:
+    print('plate detector unavailable', e); plate_det = None
 UA = {'User-Agent': 'car-library-engine/0.1 (open data research)'}
 rep = []
 for it in job:
@@ -17,6 +22,12 @@ for it in job:
     try:
         b = urllib.request.urlopen(urllib.request.Request(it['url'], headers=UA), timeout=90).read()
         im = Image.open(io.BytesIO(b)).convert('RGB')
+        plates = []
+        if plate_det is not None:
+            import cv2
+            for p in plate_det.predict(cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2BGR)):
+                bb = p.bounding_box
+                plates.append({'box': [int(bb.x1), int(bb.y1), int(bb.x2), int(bb.y2)], 'conf': round(float(p.confidence), 3)})
         cut = remove(im, session=sess, post_process_mask=True)
         a = np.asarray(cut)[..., 3]
         lab, n = ndimage.label(a > 60)
@@ -26,9 +37,12 @@ for it in job:
             m = ndimage.binary_dilation(lab == keep, iterations=3) & (a > 0)
             a = np.where(m, a, 0).astype(np.uint8)
             cut.putalpha(Image.fromarray(a))
-        ys, xs = np.nonzero(a > 20)
-        cut = cut.crop((xs.min(), ys.min(), xs.max() + 1, ys.max() + 1))
-        H, W = a.shape
+        ys, xs = np.nonzero(a > 20); H, W = a.shape
+        x0, y0 = int(xs.min()), int(ys.min())
+        cut = cut.crop((x0, y0, xs.max() + 1, ys.max() + 1))
+        # לוחיות בקואורדינטות של התמונה החתוכה, רק כאלה שיושבות על הרכב שנשאר
+        r['plates'] = [{'box': [p['box'][0] - x0, p['box'][1] - y0, p['box'][2] - x0, p['box'][3] - y0], 'conf': p['conf']}
+                       for p in plates if a[min(H - 1, (p['box'][1] + p['box'][3]) // 2), min(W - 1, (p['box'][0] + p['box'][2]) // 2)] > 128]
         r.update(ok=True, w=cut.width, h=cut.height,
                  touches=[bool(xs.min() <= 2), bool(ys.min() <= 2), bool(xs.max() >= W - 3), bool(ys.max() >= H - 3)],
                  fill=round(float((a > 128).sum()) / (cut.width * cut.height), 3), parts=int(n), sec=round(time.time() - t0, 1))
