@@ -1,0 +1,49 @@
+name: batch
+on:
+  workflow_dispatch:
+    inputs:
+      job: {description: 'jobs file', required: true}
+      n: {description: 'parallel machines', required: false, default: '20'}
+permissions:
+  contents: write
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      idx: ${{ steps.m.outputs.idx }}
+    steps:
+      - id: m
+        run: echo "idx=$(python3 -c "import json;print(json.dumps(list(range(int('${{ github.event.inputs.n }}')))))")" >> $GITHUB_OUTPUT
+  run:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        i: ${{ fromJson(needs.plan.outputs.idx) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - uses: actions/cache@v4
+        with: {path: ~/.u2net, key: u2net-birefnet-v1}
+      - run: pip install -q "rembg[cpu]==2.0.61" scipy pillow numpy opencv-python-headless open-image-models
+      - run: python cutout.py ${{ github.event.inputs.job }} ${{ matrix.i }} ${{ github.event.inputs.n }} && mv out/report.json out/report_${{ matrix.i }}.json
+      - uses: actions/upload-artifact@v4
+        with: {name: 'part-${{ matrix.i }}', path: out/, retention-days: 3}
+  publish:
+    needs: run
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {path: parts}
+      - name: release
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          mkdir out && find parts -type f -exec cp {} out/ \;
+          N=$(basename ${{ github.event.inputs.job }} .json)
+          cd out && tar czf ../$N.tgz . && cd ..
+          gh release create "batch-$N-${{ github.run_number }}" $N.tgz -R ${{ github.repository }} --title "$N" --notes "cutouts"

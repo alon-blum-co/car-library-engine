@@ -8,7 +8,10 @@ from PIL import Image
 from rembg import new_session, remove
 from scipy import ndimage
 
-job = json.load(open(sys.argv[1])); os.makedirs('out', exist_ok=True)
+job = json.load(open(sys.argv[1]))
+if len(sys.argv) > 3:   # chunk i of n (parallel matrix)
+    i, n = int(sys.argv[2]), int(sys.argv[3]); job = job[i::n]
+os.makedirs('out', exist_ok=True)
 sess = new_session(os.environ.get('MODEL', 'birefnet-general'))
 try:
     from open_image_models import LicensePlateDetector
@@ -43,7 +46,8 @@ for it in job:
         # לוחיות בקואורדינטות של התמונה החתוכה, רק כאלה שיושבות על הרכב שנשאר
         r['plates'] = [{'box': [p['box'][0] - x0, p['box'][1] - y0, p['box'][2] - x0, p['box'][3] - y0], 'conf': p['conf']}
                        for p in plates if a[min(H - 1, (p['box'][1] + p['box'][3]) // 2), min(W - 1, (p['box'][0] + p['box'][2]) // 2)] > 128]
-        r.update(ok=True, w=cut.width, h=cut.height,
+        r.update(ok=True, w=cut.width, h=cut.height, src_w=W, src_h=H,
+                 area=round(cut.width * cut.height / (W * H), 3),
                  touches=[bool(xs.min() <= 2), bool(ys.min() <= 2), bool(xs.max() >= W - 3), bool(ys.max() >= H - 3)],
                  fill=round(float((a > 128).sum()) / (cut.width * cut.height), 3), parts=int(n), sec=round(time.time() - t0, 1))
         cut.save(f'out/{it["id"]}.png', optimize=True)
